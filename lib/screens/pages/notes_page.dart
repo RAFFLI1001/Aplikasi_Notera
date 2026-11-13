@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
-
+import '../../constants/color_scheme.dart';
 import '../../models/note.dart';
-import '../../widgets/search_input.dart';
+import '../../routes/route_names.dart';
+import '../../services/storage_service.dart';
 import '../../widgets/note_card.dart';
+import '../../widgets/pin_dialog.dart';
+import '../../widgets/search_input.dart';
 
 class NotesPage extends StatefulWidget {
   const NotesPage({Key? key}) : super(key: key);
@@ -17,7 +20,8 @@ class NotesPageState extends State<NotesPage>
   late TextEditingController _inputSearchController;
   List<Note> _notes = [];
   List<Note> _filteredNotes = [];
-  int _nextId = 0;
+  String _selectedCategory = 'Semua';
+  bool _isGridView = true;
 
   @override
   bool get wantKeepAlive => true;
@@ -25,266 +29,293 @@ class NotesPageState extends State<NotesPage>
   @override
   void initState() {
     super.initState();
+    _isGridView = StorageService.isGridView();
     _inputSearchController = TextEditingController();
-    _inputSearchController.addListener(_onSearchChanged);
+    _inputSearchController.addListener(_filterNotes);
+    _loadNotes();
   }
 
-  void _onSearchChanged() {
-    final query = _inputSearchController.text.toLowerCase();
+  @override
+  void dispose() {
+    _inputSearchController.dispose();
+    super.dispose();
+  }
+
+  void toggleViewMode() {
     setState(() {
-      _filteredNotes = _notes.where((note) {
-        return note.title.toLowerCase().contains(query) ||
-            note.content.toLowerCase().contains(query);
-      }).toList();
+      _isGridView = !_isGridView;
+    });
+    StorageService.setGridView(_isGridView);
+  }
+
+  bool get isGridView => _isGridView;
+
+  void _loadNotes() {
+    final activeNotes = StorageService.getActiveNotes(category: _selectedCategory);
+    if (!mounted) return;
+    setState(() {
+      _notes = activeNotes;
+      _filterNotes();
     });
   }
 
-  void addNote() {
-  final titleController = TextEditingController();
-  final contentController = TextEditingController();
-  Color _selectedColor = Colors.white; // default color
+  void _filterNotes() {
+    final query = _inputSearchController.text.toLowerCase().trim();
+    final allCategoryNotes = StorageService.getActiveNotes(category: _selectedCategory);
 
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setStateModal) {
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom,
-              top: 24,
-              left: 16,
-              right: 16,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'New Notes',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(
-                    labelText: 'Title',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: contentController,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Content',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
+    setState(() {
+      _notes = allCategoryNotes;
+      if (query.isEmpty) {
+        _filteredNotes = List.from(allCategoryNotes);
+      } else {
+        _filteredNotes = allCategoryNotes.where((note) {
+          return note.title.toLowerCase().contains(query) ||
+              note.content.toLowerCase().contains(query) ||
+              note.category.toLowerCase().contains(query);
+        }).toList();
+      }
+    });
+  }
 
-                // Pilihan warna
-                Row(
-                  children: [
-                    const Text("Choose color: "),
-                    const SizedBox(width: 12),
-                    ...[
-                      Colors.white,
-                      Colors.yellow,
-                      Colors.greenAccent,
-                      Colors.blueAccent,
-                      Colors.pinkAccent,
-                      Colors.orangeAccent,
-                    ].map((color) {
-                      return GestureDetector(
-                        onTap: () {
-                          setStateModal(() {
-                            _selectedColor = color;
-                          });
-                        },
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          width: 30,
-                          height: 30,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                            border: _selectedColor == color
-                                ? Border.all(width: 3, color: Colors.black)
-                                : null,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ],
-                ),
+  Future<void> addNote() async {
+    await Navigator.pushNamed(context, RouteNames.inputScreen);
+    if (mounted) {
+      _loadNotes();
+    }
+  }
 
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text("Cancel"),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          final title = titleController.text.trim();
-                          final content = contentController.text.trim();
+  Future<void> _openNote(Note note) async {
+    if (note.isLocked) {
+      final unlocked = await PinDialog.verify(context);
+      if (!unlocked) return;
+    }
 
-                          if (title.isEmpty || content.isEmpty) return;
+    if (!mounted) return;
+    await Navigator.pushNamed(
+      context,
+      RouteNames.inputScreen,
+      arguments: note,
+    );
+    if (mounted) {
+      _loadNotes();
+    }
+  }
 
-                          setState(() {
-                            _notes.add(Note(
-                              id: _nextId++,
-                              title: title,
-                              content: content,
-                              date: DateTime.now(),
-                              color: _selectedColor,  // simpan warna
-                            ));
-                            _onSearchChanged();
-                          });
-
-                          Navigator.pop(context);
-                        },
-                        child: const Text("Save"),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
-            ),
-          );
-        },
-      );
-    },
-  );
-}
-
-  void _editNote(Note note) {
-    final titleController = TextEditingController(text: note.title);
-    final contentController = TextEditingController(text: note.content);
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text("Edit Note"),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(hintText: "Title"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: contentController,
-                  decoration: const InputDecoration(hintText: "Content"),
-                  maxLines: 3,
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final newTitle = titleController.text.trim();
-                final newContent = contentController.text.trim();
-
-                if (newTitle.isEmpty || newContent.isEmpty) return;
-
-                setState(() {
-                  note.title = newTitle;
-                  note.content = newContent;
-                  _onSearchChanged();
-                });
-                Navigator.of(context).pop();
-              },
-              child: const Text("Save"),
-            ),
-          ],
-        );
-      },
+  Future<void> _deleteNote(Note note) async {
+    await StorageService.trashNote(note.id);
+    _loadNotes();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Catatan dipindahkan ke Kotak Sampah'),
+        action: SnackBarAction(
+          label: 'Batal',
+          textColor: primaryColor,
+          onPressed: () async {
+            await StorageService.restoreNote(note.id);
+            _loadNotes();
+          },
+        ),
+      ),
     );
   }
 
-  void _deleteNote(Note note) {
-    setState(() {
-      _notes.removeWhere((n) => n.id == note.id);
-      _onSearchChanged();
-    });
+  Future<void> _archiveNote(Note note) async {
+    await StorageService.archiveNote(note.id, true);
+    _loadNotes();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Catatan diarsipkan'),
+        action: SnackBarAction(
+          label: 'Batal',
+          textColor: primaryColor,
+          onPressed: () async {
+            await StorageService.archiveNote(note.id, false);
+            _loadNotes();
+          },
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // required by AutomaticKeepAliveClientMixin
+    super.build(context);
 
-    return Scaffold(
-      body: Column(
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-  padding: EdgeInsets.only(top: 24, bottom: 8),
-  child: Center(
-    child: Text(
-      'Hi, Sobat',
-      style: TextStyle(
-        fontSize: 22,
-        fontWeight: FontWeight.bold,
-        color: Colors.white,
-      ),
-    ),
-  ),
-),
-
+            padding: EdgeInsets.only(top: 14, bottom: 6),
+            child: Center(
+              child: Text(
+                'Hi, Sobat',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontFamily: 'Poppins',
+                ),
+              ),
+            ),
+          ),
           SearchInput(
             controller: _inputSearchController,
-            hint: 'Search Notes',
-            onChanged: (_) => _onSearchChanged(),
+            hint: 'Cari Catatan atau #kategori...',
+            onChanged: (_) => _filterNotes(),
+            onClear: () => _filterNotes(),
           ),
+          const SizedBox(height: 8),
+
+          // Horizontal Category Filter Chips
+          Container(
+            height: 38,
+            margin: const EdgeInsets.only(bottom: 6),
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: StorageService.noteCategories.length,
+              itemBuilder: (context, index) {
+                final cat = StorageService.noteCategories[index];
+                final isSelected = _selectedCategory == cat;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: FilterChip(
+                    label: Text(cat == 'Semua' ? 'Semua' : '#$cat'),
+                    selected: isSelected,
+                    onSelected: (val) {
+                      setState(() {
+                        _selectedCategory = cat;
+                      });
+                      _loadNotes();
+                    },
+                    labelStyle: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                      color: isSelected ? Colors.black : Colors.white70,
+                    ),
+                    selectedColor: primaryColor,
+                    backgroundColor: greycolor.withOpacity(0.4),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                );
+              },
+            ),
+          ),
+
           Expanded(
-            child: _filteredNotes.isEmpty
-                ? const Center(
-                    child: Text(
-                      "No Notes found",
-                      style: TextStyle(fontSize: 18, color: Colors.grey),
+            child: _notes.isEmpty
+                ? Center(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.note_alt_outlined,
+                            size: 72,
+                            color: Colors.grey.withOpacity(0.5),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _selectedCategory == 'Semua'
+                                ? "Belum ada catatan"
+                                : "Belum ada catatan kategori '$_selectedCategory'",
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey,
+                              fontFamily: 'Poppins',
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            "Tekan tombol + untuk menambah catatan baru",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey,
+                              fontFamily: 'Poppins',
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   )
-                : MasonryGridView.count(
-                    itemCount: _filteredNotes.length,
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    padding: const EdgeInsets.all(16),
-                    itemBuilder: (context, index) {
-                      final note = _filteredNotes[index];
-                      return NoteCard(
-                        note: note,
-                        onEdit: () => _editNote(note),
-                        onDelete: () => _deleteNote(note),
-                      );
-                    },
-                  ),
+                : _filteredNotes.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.search_off_rounded,
+                              size: 64,
+                              color: Colors.grey.withOpacity(0.5),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              "Catatan tidak ditemukan",
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey,
+                                fontFamily: 'Poppins',
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _isGridView
+                        ? MasonryGridView.count(
+                            itemCount: _filteredNotes.length,
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            itemBuilder: (context, index) {
+                              final note = _filteredNotes[index];
+                              return NoteCard(
+                                key: ValueKey(note.id),
+                                note: note,
+                                isListView: false,
+                                onTap: () => _openNote(note),
+                                onEdit: () => _openNote(note),
+                                onDelete: () => _deleteNote(note),
+                                onArchive: () => _archiveNote(note),
+                                onPinToggle: () async {
+                                  final updated = note.copyWith(isPinned: !note.isPinned);
+                                  await StorageService.saveNote(updated);
+                                  _loadNotes();
+                                },
+                              );
+                            },
+                          )
+                        : ListView.separated(
+                            itemCount: _filteredNotes.length,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            separatorBuilder: (_, __) => const SizedBox(height: 10),
+                            itemBuilder: (context, index) {
+                              final note = _filteredNotes[index];
+                              return NoteCard(
+                                key: ValueKey(note.id),
+                                note: note,
+                                isListView: true,
+                                onTap: () => _openNote(note),
+                                onEdit: () => _openNote(note),
+                                onDelete: () => _deleteNote(note),
+                                onArchive: () => _archiveNote(note),
+                                onPinToggle: () async {
+                                  final updated = note.copyWith(isPinned: !note.isPinned);
+                                  await StorageService.saveNote(updated);
+                                  _loadNotes();
+                                },
+                              );
+                            },
+                          ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: addNote,
-        child: const Icon(Icons.add),
-        backgroundColor: Colors.yellow[700],
       ),
     );
   }

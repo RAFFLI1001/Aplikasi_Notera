@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'constants/theme.dart';
 import 'routes/app_routes.dart';
 import 'routes/route_names.dart';
+import 'services/storage_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await StorageService.init();
   runApp(const MyApp());
 }
 
